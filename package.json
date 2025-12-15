@@ -1,0 +1,46 @@
+{
+  "name": "ocmt",
+  "version": "1.0.0",
+  "description": "AI-powered git commit message generator using opencode.ai",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "opencommit": "./src/cli.ts",
+    "ocmt": "./src/cli.ts",
+    "oc": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "dev": "bun --watch src/cli.ts",
+    "build": "bun build src/cli.ts --outdir=dist --target=node --format=esm",
+    "build:compile": "bun build src/cli.ts --compile --outfile=dist/oc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "git",
+    "commit",
+    "ai",
+    "opencode",
+    "cli",
+    "changelog",
+    "bun"
+  ],
+  "author": "",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "inquirer": "^9.3.7",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/inquirer": "^9.0.7",
+    "typescript": "^5.7.2"
+  }
+}
