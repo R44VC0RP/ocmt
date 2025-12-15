@@ -164,3 +164,81 @@ export async function getCommitsBetween(
     return { hash, message: messageParts.join(" ") };
   });
 }
+
+export interface VersionBump {
+  oldVersion: string | null;
+  newVersion: string | null;
+  file: string;
+}
+
+/**
+ * Detect version bumps in package.json between two refs
+ */
+export async function detectVersionBump(
+  from: string,
+  to: string
+): Promise<VersionBump | null> {
+  try {
+    // Check if package.json was modified
+    const changedFiles = await git(`diff --name-only ${from}..${to}`);
+    
+    if (!changedFiles.includes("package.json")) {
+      return null;
+    }
+
+    // Get old version
+    let oldVersion: string | null = null;
+    try {
+      const oldPackageJson = await git(`show ${from}:package.json`);
+      const oldPkg = JSON.parse(oldPackageJson);
+      oldVersion = oldPkg.version || null;
+    } catch {
+      // File might not exist in old ref
+    }
+
+    // Get new version
+    let newVersion: string | null = null;
+    try {
+      const newPackageJson = await git(`show ${to}:package.json`);
+      const newPkg = JSON.parse(newPackageJson);
+      newVersion = newPkg.version || null;
+    } catch {
+      // File might not exist in new ref
+    }
+
+    // Only return if version actually changed
+    if (oldVersion !== newVersion && newVersion) {
+      return {
+        oldVersion,
+        newVersion,
+        file: "package.json",
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the current version from package.json in the working directory
+ */
+export async function getCurrentVersion(): Promise<string | null> {
+  try {
+    const repoRoot = await git("rev-parse --show-toplevel");
+    const { readFileSync, existsSync } = await import("fs");
+    const { join } = await import("path");
+    
+    const packageJsonPath = join(repoRoot, "package.json");
+    
+    if (!existsSync(packageJsonPath)) {
+      return null;
+    }
+
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+    return packageJson.version || null;
+  } catch {
+    return null;
+  }
+}

@@ -42,6 +42,7 @@ export interface ChangelogGenerationOptions {
   diff?: string;
   fromRef: string;
   toRef: string;
+  version?: string | null;
 }
 
 export interface UpdateChangelogOptions {
@@ -217,7 +218,7 @@ export async function generateCommitMessage(
 export async function generateChangelog(
   options: ChangelogGenerationOptions
 ): Promise<string> {
-  const { commits, fromRef, toRef } = options;
+  const { commits, fromRef, toRef, version } = options;
 
   const client = await getClient();
   const systemPrompt = await getChangelogConfig();
@@ -236,8 +237,16 @@ export async function generateChangelog(
     .map((c) => `- ${c.hash}: ${c.message}`)
     .join("\n");
 
+  // Build version instruction
+  let versionInstruction = "";
+  if (version) {
+    versionInstruction = `\n\nIMPORTANT: A version bump to ${version} was detected. Use "[${version}]" as the version header with today's date (format: YYYY-MM-DD), NOT "[Unreleased]".`;
+  } else {
+    versionInstruction = `\n\nUse "[Unreleased]" as the version header since no version bump was detected.`;
+  }
+
   // Build the prompt
-  const prompt = `${systemPrompt}\n\n---\n\nGenerate a changelog for the following commits (from ${fromRef} to ${toRef}):\n\n${commitsList}`;
+  const prompt = `${systemPrompt}\n\n---\n\nGenerate a changelog for the following commits (from ${fromRef} to ${toRef}):${versionInstruction}\n\n${commitsList}`;
 
   // Send the prompt
   const result = await client.session.prompt({

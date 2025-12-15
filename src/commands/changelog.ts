@@ -8,6 +8,7 @@ import {
   getCommitsBetween,
   getLog,
   git,
+  detectVersionBump,
 } from "../utils/git";
 import { generateChangelog, updateChangelogFile } from "../lib/opencode";
 import {
@@ -244,6 +245,12 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
       .join("\n");
     p.log.info(`Commits to include in changelog:\n${commitsList}`);
 
+    // Detect version bump
+    const versionBump = await detectVersionBump(fromRef!, toRef);
+    if (versionBump?.newVersion) {
+      p.log.success(`Version bump detected: ${color.cyan(versionBump.oldVersion || "none")} → ${color.cyan(versionBump.newVersion)}`);
+    }
+
     // Generate changelog
     const genSpinner = p.spinner();
     genSpinner.start("Generating changelog");
@@ -253,6 +260,7 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
         commits,
         fromRef: fromRef!,
         toRef,
+        version: versionBump?.newVersion,
       });
 
       genSpinner.stop("Changelog generated");
