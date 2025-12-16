@@ -285,6 +285,7 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
 
       if (p.isCancel(action)) {
         p.cancel("Aborted");
+        cleanup();
         process.exit(0);
       }
 
