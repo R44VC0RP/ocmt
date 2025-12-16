@@ -10,7 +10,7 @@ import {
   git,
   detectVersionBump,
 } from "../utils/git";
-import { generateChangelog, updateChangelogFile } from "../lib/opencode";
+import { generateChangelog, updateChangelogFile, cleanup } from "../lib/opencode";
 import {
   hasCommitsSinceLastChangelog,
   addHistoryEntry,
@@ -314,14 +314,18 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
       }
 
       p.outro(color.green("Done!"));
+      cleanup();
+      process.exit(0);
     } catch (error: any) {
       genSpinner.stop("Failed to generate changelog");
       p.cancel(error.message);
+      cleanup();
       process.exit(1);
     }
   } catch (error: any) {
     s.stop("Failed to fetch commits");
     p.cancel(error.message);
+    cleanup();
     process.exit(1);
   }
 }

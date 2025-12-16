@@ -14,7 +14,7 @@ import {
   getStagedDiff,
   type GitStatus,
 } from "../utils/git";
-import { generateCommitMessage, generateChangelog, updateChangelogFile } from "../lib/opencode";
+import { generateCommitMessage, generateChangelog, updateChangelogFile, cleanup } from "../lib/opencode";
 import {
   addHistoryEntry,
   getLastEntry,
@@ -123,6 +123,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
   // Check if we're in a git repo
   if (!(await isGitRepo())) {
     p.cancel("Not a git repository");
+    cleanup();
     process.exit(1);
   }
 
@@ -155,6 +156,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
 
           if (p.isCancel(shouldStage) || !shouldStage) {
             p.cancel("Aborted. Stage changes first with `git add`");
+            cleanup();
             process.exit(0);
           }
         }
@@ -196,6 +198,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
 
           if (p.isCancel(confirmCommit) || !confirmCommit) {
             p.cancel("Aborted");
+            cleanup();
             process.exit(0);
           }
         }
@@ -237,6 +240,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
       }
     } catch {
       p.cancel("Could not determine starting point. Use --from to specify.");
+      cleanup();
       process.exit(1);
     }
   }
@@ -273,6 +277,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
 
           if (p.isCancel(inputVersion)) {
             p.cancel("Aborted");
+            cleanup();
             process.exit(0);
           }
           version = inputVersion as string;
@@ -284,6 +289,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
 
     if (!version) {
       p.cancel("Version is required for release");
+      cleanup();
       process.exit(1);
     }
 
@@ -339,6 +345,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
       
       if (p.isCancel(tagConfirm)) {
         p.cancel("Aborted");
+        cleanup();
         process.exit(0);
       }
       shouldTag = tagConfirm;
@@ -397,4 +404,6 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
 
   p.log.success("Release complete!");
   p.outro(color.green("Done!"));
+  cleanup();
+  process.exit(0);
 }

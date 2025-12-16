@@ -8,7 +8,7 @@ import {
   commit,
   type GitStatus,
 } from "../utils/git";
-import { generateCommitMessage } from "../lib/opencode";
+import { generateCommitMessage, cleanup } from "../lib/opencode";
 
 export interface CommitOptions {
   message?: string;
@@ -188,9 +188,12 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     const result = await commit(commitMessage!);
     s.stop(`Committed successfully!\n${color.dim(result)}`);
     p.outro(color.green("Done!"));
+    cleanup();
+    process.exit(0);
   } catch (error: any) {
     s.stop("Commit failed");
     p.cancel(error.message);
+    cleanup();
     process.exit(1);
   }
 }
