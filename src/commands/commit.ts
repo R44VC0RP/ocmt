@@ -96,9 +96,9 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     process.exit(0);
   }
 
-  // Show diff summary
-  const diffLines = diff.split("\n").length;
-  p.log.info(`Diff: ${diffLines} lines`);
+  // Show the number of diff lines
+  const diffLineLength = diff.split("\n").length;
+  p.log.info(`Diff: ${diffLineLength} lines`);
 
   // If message provided, use it directly
   let commitMessage = options.message;
