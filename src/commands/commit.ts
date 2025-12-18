@@ -126,65 +126,56 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
 
   // Confirm commit (unless --yes)
   if (!options.yes) {
-    const action = await p.select({
-      message: "What would you like to do?",
-      options: [
-        { value: "commit", label: "Commit with this message" },
-        { value: "edit", label: "Edit message" },
-        { value: "regenerate", label: "Regenerate message" },
-        { value: "cancel", label: "Cancel" },
-      ],
-    });
-
-    if (p.isCancel(action) || action === "cancel") {
-      p.cancel("Aborted");
-      cleanup();
-      process.exit(0);
-    }
-
-    if (action === "edit") {
-      const editedMessage = await p.text({
-        message: "Enter commit message:",
-        initialValue: commitMessage,
-        validate: (value) => {
-          if (!value.trim()) return "Commit message cannot be empty";
-        },
+    let action: string | null;
+    while (action !== "commit") {
+      action = await p.select({
+        message: "What would you like to do?",
+        options: [
+          { value: "commit", label: "Commit with this message" },
+          { value: "edit", label: "Edit message" },
+          { value: "regenerate", label: "Regenerate message" },
+          { value: "cancel", label: "Cancel" },
+        ],
       });
 
-      if (p.isCancel(editedMessage)) {
+      if (p.isCancel(action) || action === "cancel") {
         p.cancel("Aborted");
         cleanup();
         process.exit(0);
       }
 
-      commitMessage = editedMessage;
-    }
+      if (action === "edit") {
+        const editedMessage = await p.text({
+          message: "Enter commit message:",
+          initialValue: commitMessage,
+          validate: (value) => {
+            if (!value.trim()) return "Commit message cannot be empty";
+          },
+        });
 
-    if (action === "regenerate") {
-      const s = p.spinner();
-      s.start("Regenerating commit message");
+        if (p.isCancel(editedMessage)) {
+          p.cancel("Aborted");
+          cleanup();
+          process.exit(0);
+        }
 
-      try {
-        commitMessage = await generateCommitMessage({ diff });
-        s.stop("Commit message regenerated");
-      } catch (error: any) {
-        s.stop("Failed to regenerate commit message");
-        p.cancel(error.message);
-        cleanup();
-        process.exit(1);
+        commitMessage = editedMessage;
       }
 
-      p.log.step(`New commit message:\n${color.white(`  "${commitMessage}"`)}`);
+      if (action === "regenerate") {
+        const s = p.spinner();
+        s.start("Regenerating commit message");
 
-      const confirmNew = await p.confirm({
-        message: "Use this message?",
-        initialValue: true,
-      });
+        try {
+          commitMessage = await generateCommitMessage({ diff });
+          s.stop("Commit message regenerated");
+        } catch (error: any) {
+          s.stop("Failed to regenerate commit message");
+          p.cancel(error.message);
+          continue;
+        }
 
-      if (p.isCancel(confirmNew) || !confirmNew) {
-        p.cancel("Aborted");
-        cleanup();
-        process.exit(0);
+        p.log.step(`New commit message:\n${color.white(`  "${commitMessage}"`)}`);
       }
     }
   }
