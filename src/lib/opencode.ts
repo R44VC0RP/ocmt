@@ -18,15 +18,53 @@ import { getCommitConfig, getChangelogConfig } from "./config";
 const execAsync = promisify(exec);
 
 // Models
-const COMMIT_MODEL = {
-  providerID: "opencode",
-  modelID: "gpt-5-nano",
+type Model = {
+  providerID: string;
+  modelID: string;
 };
+const commitModelEnv = process.env["COMMIT_MODEL"];
+let commitModel: Model;
+if (!commitModelEnv) {
+  // default
+  commitModel = {
+    providerID: "opencode",
+    modelID: "gpt-5-nano",
+  }
+} else {
+  const commitModelSplit = commitModelEnv.split("/");
+  const commitProviderID = commitModelSplit[0];
+  const commitModelID = commitModelSplit[1];
+  if (!commitProviderID || !commitModelID) {
+    throw new Error("COMMIT_MODEL must be in the form 'provider/model', e.g. 'opencode/gpt-5-nano', 'ollama/ministral-3:14b', etc.");
+  }
+  commitModel = {
+    providerID: commitProviderID,
+    modelID: commitModelID,
+  }
+}
+export const COMMIT_MODEL = commitModel;
 
-const CHANGELOG_MODEL = {
-  providerID: "opencode",
-  modelID: "claude-sonnet-4-5",
-};
+const changelogModelEnv = process.env["CHANGELOG_MODEL"];
+let changelogModel: Model;
+if (!changelogModelEnv) {
+  // default
+  changelogModel = {
+    providerID: "opencode",
+    modelID: "claude-sonnet-4-5",
+  }
+} else {
+  const changelogModelSplit = changelogModelEnv.split("/");
+  const changelogProviderID = changelogModelSplit[0];
+  const changelogModelID = changelogModelSplit[1];
+  if (!changelogProviderID || !changelogModelID) {
+    throw new Error("CHANGELOG_MODEL must be in the form 'provider/model', e.g. 'opencode/gpt-5-nano', 'ollama/ministral-3:14b', etc.");
+  }
+  changelogModel = {
+    providerID: changelogProviderID,
+    modelID: changelogModelID,
+  }
+}
+export const CHANGELOG_MODEL = changelogModel;
 
 // Server state
 let clientInstance: OpencodeClient | null = null;
