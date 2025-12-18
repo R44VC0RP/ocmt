@@ -34,9 +34,8 @@ if (!commitModelEnv) {
   const commitModelSplit = commitModelEnv.split("/");
   const commitProviderID = commitModelSplit[0];
   const commitModelID = commitModelSplit[1];
-  if (!commitProviderID | !commitModelID) {
+  if (!commitProviderID || !commitModelID) {
     throw new Error("COMMIT_MODEL must be in the form 'provider/model', e.g. 'opencode/gpt-5-nano', 'ollama/ministral-3:14b', etc.");
-    process.exit(1);
   }
   commitModel = {
     providerID: commitProviderID,
@@ -57,7 +56,7 @@ if (!changelogModelEnv) {
   const changelogModelSplit = changelogModelEnv.split("/");
   const changelogProviderID = changelogModelSplit[0];
   const changelogModelID = changelogModelSplit[1];
-  if (!changelogProviderID | !changelogModelID) {
+  if (!changelogProviderID || !changelogModelID) {
     throw new Error("CHANGELOG_MODEL must be in the form 'provider/model', e.g. 'opencode/gpt-5-nano', 'ollama/ministral-3:14b', etc.");
   }
   changelogModel = {
