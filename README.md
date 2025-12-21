@@ -30,6 +30,8 @@ AI-powered git commit message, changelog & documentation generator using [openco
 - **Changelog generation** - Create changelogs from your commit history
 - **Interactive CLI** - Beautiful terminal UI with confirmation prompts
 - **Customizable** - Edit `.oc/config.md` to customize commit message rules
+- **Smart Composition** - Split large changes into logical atomic commits with `oc compose`
+- **Model Selection** - Choose your preferred AI model for each task with `oc config`
 - **Multiple aliases** - Use `oc`, `ocmt`, or `opencommit`
 
 ## Installation
@@ -92,6 +94,23 @@ oc -ay
 oc "feat: add new feature"
 ```
 
+### Compose Commits (Smart Split)
+
+```bash
+# Interactively split changes into multiple logical commits
+oc compose
+
+# Stage all changes first
+oc compose -a
+```
+
+### Configure Models
+
+```bash
+# Interactive model configuration
+oc config
+```
+
 ### Generate Changelog
 
 ```bash
@@ -144,6 +163,8 @@ Edit these files to customize AI behavior for your project.
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `oc` | `ocmt`, `opencommit` | Generate commit message from staged changes |
+| `oc compose` | | Split changes into logical atomic commits |
+| `oc config` | | Configure AI models and settings |
 | `oc changelog` | `oc cl` | Generate changelog from commits |
 
 ## Options
@@ -154,6 +175,7 @@ Edit these files to customize AI behavior for your project.
 |--------|-------------|
 | `-a, --all` | Stage all changes before committing |
 | `-y, --yes` | Skip confirmation prompts |
+| `-m, --model <id>` | Override AI model (e.g. `anthropic/claude-3-5-sonnet`) |
 | `-V, --version` | Show version number |
 | `-h, --help` | Show help |
 
