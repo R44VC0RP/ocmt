@@ -11,6 +11,7 @@ import {
   detectVersionBump,
 } from "../utils/git";
 import { generateChangelog, updateChangelogFile, cleanup } from "../lib/opencode";
+import { parseModelString } from "../lib/config";
 import {
   hasCommitsSinceLastChangelog,
   addHistoryEntry,
@@ -20,6 +21,7 @@ import {
 export interface ChangelogOptions {
   from?: string;
   to?: string;
+  model?: string;
 }
 
 /**
@@ -51,7 +53,7 @@ async function getChangelogPath(): Promise<string> {
  * If file exists, use AI to intelligently merge content
  * If file doesn't exist, create new file with header
  */
-async function saveChangelog(content: string, useAI: boolean = true): Promise<string> {
+async function saveChangelog(content: string, useAI: boolean = true, model?: string): Promise<string> {
   const changelogPath = await getChangelogPath();
 
   // Clean up the content - remove markdown code blocks if present
@@ -70,6 +72,7 @@ async function saveChangelog(content: string, useAI: boolean = true): Promise<st
         newChangelog: cleanContent,
         existingChangelog: existing,
         changelogPath,
+        model: parseModelString(model),
       });
       writeFileSync(changelogPath, updatedContent + "\n", "utf-8");
     } else {
@@ -265,6 +268,7 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
         fromRef: fromRef!,
         toRef,
         version: versionBump?.newVersion,
+        model: parseModelString(options.model),
       });
 
       genSpinner.stop("Changelog generated");
@@ -306,7 +310,7 @@ export async function changelogCommand(options: ChangelogOptions): Promise<void>
         saveSpinner.start(`${actionWord} CHANGELOG.md`);
 
         try {
-          const filePath = await saveChangelog(changelog, changelogFileExists);
+          const filePath = await saveChangelog(changelog, changelogFileExists, options.model);
           const doneWord = changelogFileExists ? "Updated" : "Created";
           saveSpinner.stop(`${doneWord} ${color.cyan(filePath)}`);
 

@@ -230,9 +230,9 @@ export async function getCurrentVersion(): Promise<string | null> {
     const repoRoot = await git("rev-parse --show-toplevel");
     const { readFileSync, existsSync } = await import("fs");
     const { join } = await import("path");
-    
+
     const packageJsonPath = join(repoRoot, "package.json");
-    
+
     if (!existsSync(packageJsonPath)) {
       return null;
     }
@@ -242,4 +242,196 @@ export async function getCurrentVersion(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// =============================================================================
+// Composer-related git utilities
+// =============================================================================
+
+export interface FileStats {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "modified" | "deleted" | "renamed";
+}
+
+export interface FileDiff {
+  path: string;
+  diff: string;
+  stats: FileStats;
+}
+
+/**
+ * Get the list of changed files with their stats (staged or unstaged)
+ */
+export async function getChangedFilesWithStats(
+  staged: boolean = true
+): Promise<FileStats[]> {
+  const flag = staged ? "--cached" : "";
+
+  // Get numstat for additions/deletions
+  const numstatOutput = await git(`diff ${flag} --numstat`.trim());
+  const nameStatusOutput = await git(`diff ${flag} --name-status`.trim());
+
+  if (!numstatOutput && !nameStatusOutput) {
+    return [];
+  }
+
+  const numstatLines = numstatOutput.split("\n").filter(Boolean);
+  const nameStatusLines = nameStatusOutput.split("\n").filter(Boolean);
+
+  const statsMap = new Map<string, FileStats>();
+
+  // Parse numstat (additions, deletions, filename)
+  for (const line of numstatLines) {
+    const parts = line.split("\t");
+    if (parts.length >= 3) {
+      const additions = parts[0] === "-" ? 0 : parseInt(parts[0], 10);
+      const deletions = parts[1] === "-" ? 0 : parseInt(parts[1], 10);
+      const path = parts[2];
+
+      statsMap.set(path, {
+        path,
+        additions,
+        deletions,
+        status: "modified", // Will be updated from name-status
+      });
+    }
+  }
+
+  // Parse name-status for file status
+  for (const line of nameStatusLines) {
+    const parts = line.split("\t");
+    if (parts.length >= 2) {
+      const statusChar = parts[0][0];
+      // Handle renames: R100\told\tnew
+      const path = parts.length === 3 ? parts[2] : parts[1];
+      const oldPath = parts.length === 3 ? parts[1] : undefined;
+
+      let status: FileStats["status"] = "modified";
+      switch (statusChar) {
+        case "A":
+          status = "added";
+          break;
+        case "D":
+          status = "deleted";
+          break;
+        case "R":
+          status = "renamed";
+          break;
+        case "M":
+        default:
+          status = "modified";
+          break;
+      }
+
+      // If renamed, we need to find by either old or new path
+      const existing = statsMap.get(path) || statsMap.get(oldPath || "");
+      if (existing) {
+        existing.status = status;
+        existing.path = path;
+      } else {
+        statsMap.set(path, {
+          path,
+          additions: 0,
+          deletions: 0,
+          status,
+        });
+      }
+    }
+  }
+
+  return Array.from(statsMap.values());
+}
+
+/**
+ * Get diff for a specific file (staged or unstaged)
+ */
+export async function getFileDiff(
+  filePath: string,
+  staged: boolean = true
+): Promise<string> {
+  const flag = staged ? "--cached" : "";
+  try {
+    return await git(`diff ${flag} -- "${filePath}"`.trim());
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Get diffs for all changed files with their stats
+ */
+export async function getAllFileDiffs(
+  staged: boolean = true
+): Promise<FileDiff[]> {
+  const stats = await getChangedFilesWithStats(staged);
+  const diffs: FileDiff[] = [];
+
+  for (const stat of stats) {
+    const diff = await getFileDiff(stat.path, staged);
+    diffs.push({
+      path: stat.path,
+      diff,
+      stats: stat,
+    });
+  }
+
+  return diffs;
+}
+
+/**
+ * Unstage specific files
+ */
+export async function unstageFiles(files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  const escaped = files.map((f) => `"${f}"`).join(" ");
+  await git(`reset HEAD ${escaped}`);
+}
+
+/**
+ * Unstage all files
+ */
+export async function unstageAll(): Promise<void> {
+  try {
+    await git("reset HEAD");
+  } catch {
+    // Might fail if no commits yet, ignore
+  }
+}
+
+/**
+ * Get the content of a new/untracked file
+ */
+export async function getUntrackedFileContent(filePath: string): Promise<string> {
+  try {
+    const repoRoot = await git("rev-parse --show-toplevel");
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+
+    const fullPath = join(repoRoot, filePath);
+    return readFileSync(fullPath, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Create a diff-like output for untracked files
+ */
+export async function createDiffForUntracked(filePath: string): Promise<string> {
+  const content = await getUntrackedFileContent(filePath);
+  if (!content) return "";
+
+  const lines = content.split("\n");
+  const diffLines = [
+    `diff --git a/${filePath} b/${filePath}`,
+    `new file mode 100644`,
+    `--- /dev/null`,
+    `+++ b/${filePath}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`),
+  ];
+
+  return diffLines.join("\n");
 }

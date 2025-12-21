@@ -15,6 +15,7 @@ import {
   type GitStatus,
 } from "../utils/git";
 import { generateCommitMessage, generateChangelog, updateChangelogFile, cleanup } from "../lib/opencode";
+import { parseModelString } from "../lib/config";
 import {
   addHistoryEntry,
   getLastEntry,
@@ -26,6 +27,7 @@ export interface ReleaseOptions {
   yes?: boolean;
   tag?: boolean;
   push?: boolean;
+  model?: string;
 }
 
 /**
@@ -54,7 +56,7 @@ async function changelogExists(): Promise<boolean> {
 /**
  * Save changelog to CHANGELOG.md
  */
-async function saveChangelog(content: string, useAI: boolean = true): Promise<string> {
+async function saveChangelog(content: string, useAI: boolean = true, model?: string): Promise<string> {
   const changelogPath = await getChangelogPath();
 
   let cleanContent = content
@@ -71,6 +73,7 @@ async function saveChangelog(content: string, useAI: boolean = true): Promise<st
         newChangelog: cleanContent,
         existingChangelog: existing,
         changelogPath,
+        model: parseModelString(model),
       });
       writeFileSync(changelogPath, updatedContent + "\n", "utf-8");
     } else {
@@ -184,8 +187,11 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
       if (diff) {
         const genSpinner = p.spinner();
         genSpinner.start("Generating commit message");
-        
-        const commitMessage = await generateCommitMessage({ diff });
+
+        const commitMessage = await generateCommitMessage({
+          diff,
+          model: parseModelString(options.model),
+        });
         genSpinner.stop("Commit message generated");
 
         p.log.info(`Commit message: ${color.cyan(`"${commitMessage}"`)}`);
@@ -304,6 +310,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
       fromRef,
       toRef,
       version,
+      model: parseModelString(options.model),
     });
 
     changelogSpinner.stop("Changelog generated");
@@ -314,7 +321,7 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
     const changelogFileExists = await changelogExists();
     saveSpinner.start(`${changelogFileExists ? "Updating" : "Creating"} CHANGELOG.md`);
 
-    await saveChangelog(changelog, changelogFileExists);
+    await saveChangelog(changelog, changelogFileExists, options.model);
     saveSpinner.stop(`${changelogFileExists ? "Updated" : "Created"} CHANGELOG.md`);
 
     // Commit changelog

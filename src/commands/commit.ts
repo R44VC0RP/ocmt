@@ -9,11 +9,13 @@ import {
   type GitStatus,
 } from "../utils/git";
 import { generateCommitMessage, cleanup } from "../lib/opencode";
+import { parseModelString } from "../lib/config";
 
 export interface CommitOptions {
   message?: string;
   all?: boolean;
   yes?: boolean;
+  model?: string;
 }
 
 /**
@@ -109,7 +111,10 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     s.start("Generating commit message");
 
     try {
-      commitMessage = await generateCommitMessage({ diff });
+      commitMessage = await generateCommitMessage({
+        diff,
+        model: parseModelString(options.model),
+      });
       s.stop("Commit message generated");
     } catch (error: any) {
       s.stop("Failed to generate commit message");
@@ -165,7 +170,10 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       s.start("Regenerating commit message");
 
       try {
-        commitMessage = await generateCommitMessage({ diff });
+        commitMessage = await generateCommitMessage({
+          diff,
+          model: parseModelString(options.model),
+        });
         s.stop("Commit message regenerated");
       } catch (error: any) {
         s.stop("Failed to regenerate commit message");
