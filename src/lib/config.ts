@@ -1,10 +1,12 @@
 /**
  * Configuration file management for oc
  *
- * Manages .oc/config.md, .oc/changelog.md, and .oc/config.json in the repo root
+ * Manages global ~/.oc and project-level .oc config directories.
+ * Project config overrides global config.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { git } from "../utils/git";
 
@@ -12,6 +14,50 @@ const CONFIG_DIR = ".oc";
 const COMMIT_CONFIG_FILE = "config.md";
 const CHANGELOG_CONFIG_FILE = "changelog.md";
 const JSON_CONFIG_FILE = "config.json";
+
+// Global config directory in user's home
+const GLOBAL_CONFIG_DIR = join(homedir(), ".oc");
+
+/**
+ * Check if a value is a plain object (for deep merge)
+ */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Merge two config objects with override taking precedence.
+ * Performs shallow merge on nested objects (one level deep).
+ */
+function mergeConfigs(base: OcConfig, override: Partial<OcConfig>): OcConfig {
+  const result = { ...base };
+
+  for (const key of Object.keys(override) as (keyof OcConfig)[]) {
+    const baseValue = result[key];
+    const overrideValue = override[key];
+
+    if (overrideValue !== undefined) {
+      if (isObject(baseValue) && isObject(overrideValue)) {
+        // Shallow merge nested objects (one level)
+        result[key] = { ...baseValue, ...overrideValue } as typeof baseValue;
+      } else {
+        result[key] = overrideValue as typeof baseValue;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Ensure the global ~/.oc config directory exists
+ */
+function ensureGlobalConfigDir(): string {
+  if (!existsSync(GLOBAL_CONFIG_DIR)) {
+    mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
+  }
+  return GLOBAL_CONFIG_DIR;
+}
 
 /**
  * JSON config structure
@@ -145,45 +191,53 @@ async function getRepoRoot(): Promise<string> {
 }
 
 /**
- * Ensure the .oc config directory exists
+ * Get a text config file with layered loading:
+ * 1. Use project .oc/<fileName> if exists
+ * 2. Otherwise use global ~/.oc/<fileName> (created if doesn't exist)
  */
-async function ensureConfigDir(): Promise<string> {
-  const repoRoot = await getRepoRoot();
-  const configDir = join(repoRoot, CONFIG_DIR);
+async function getLayeredTextConfig(
+  fileName: string,
+  defaultContent: string
+): Promise<string> {
+  // Check project config first
+  try {
+    const repoRoot = await getRepoRoot();
+    const projectPath = join(repoRoot, CONFIG_DIR, fileName);
 
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
+    if (existsSync(projectPath)) {
+      return readFileSync(projectPath, "utf-8");
+    }
+  } catch {
+    // Not in a git repo, use global
   }
 
-  return configDir;
+  // Fall back to global config (create if doesn't exist)
+  const globalDir = ensureGlobalConfigDir();
+  const globalPath = join(globalDir, fileName);
+
+  if (!existsSync(globalPath)) {
+    writeFileSync(globalPath, defaultContent, "utf-8");
+  }
+
+  return readFileSync(globalPath, "utf-8");
 }
 
 /**
- * Get the commit config (creates default if doesn't exist)
+ * Get the commit config with layered loading:
+ * 1. Use project .oc/config.md if exists
+ * 2. Otherwise use global ~/.oc/config.md (created if doesn't exist)
  */
 export async function getCommitConfig(): Promise<string> {
-  const configDir = await ensureConfigDir();
-  const configPath = join(configDir, COMMIT_CONFIG_FILE);
-
-  if (!existsSync(configPath)) {
-    writeFileSync(configPath, DEFAULT_COMMIT_CONFIG, "utf-8");
-  }
-
-  return readFileSync(configPath, "utf-8");
+  return getLayeredTextConfig(COMMIT_CONFIG_FILE, DEFAULT_COMMIT_CONFIG);
 }
 
 /**
- * Get the changelog config (creates default if doesn't exist)
+ * Get the changelog config with layered loading:
+ * 1. Use project .oc/changelog.md if exists
+ * 2. Otherwise use global ~/.oc/changelog.md (created if doesn't exist)
  */
 export async function getChangelogConfig(): Promise<string> {
-  const configDir = await ensureConfigDir();
-  const configPath = join(configDir, CHANGELOG_CONFIG_FILE);
-
-  if (!existsSync(configPath)) {
-    writeFileSync(configPath, DEFAULT_CHANGELOG_CONFIG, "utf-8");
-  }
-
-  return readFileSync(configPath, "utf-8");
+  return getLayeredTextConfig(CHANGELOG_CONFIG_FILE, DEFAULT_CHANGELOG_CONFIG);
 }
 
 /**
@@ -200,30 +254,56 @@ export async function configExists(): Promise<boolean> {
 }
 
 /**
- * Get the JSON config (creates default if doesn't exist)
+ * Get the JSON config with layered loading:
+ * 1. Start with defaults
+ * 2. Merge global ~/.oc/config.json (created if doesn't exist)
+ * 3. Merge project .oc/config.json (if exists, not created)
  */
 export async function getConfig(): Promise<OcConfig> {
-  const configDir = await ensureConfigDir();
-  const configPath = join(configDir, JSON_CONFIG_FILE);
+  // Start with defaults
+  let config: OcConfig = { ...DEFAULT_JSON_CONFIG };
 
-  if (!existsSync(configPath)) {
-    writeFileSync(configPath, JSON.stringify(DEFAULT_JSON_CONFIG, null, 2), "utf-8");
-    return DEFAULT_JSON_CONFIG;
+  // Load global config (create if doesn't exist)
+  const globalDir = ensureGlobalConfigDir();
+  const globalPath = join(globalDir, JSON_CONFIG_FILE);
+
+  if (!existsSync(globalPath)) {
+    writeFileSync(
+      globalPath,
+      JSON.stringify(DEFAULT_JSON_CONFIG, null, 2),
+      "utf-8"
+    );
+  } else {
+    try {
+      const globalContent = readFileSync(globalPath, "utf-8");
+      const globalConfig = JSON.parse(globalContent) as Partial<OcConfig>;
+      config = mergeConfigs(config, globalConfig);
+    } catch (error) {
+      console.warn(
+        `[oc] Warning: Could not parse global config at '${globalPath}'. Using defaults. Error: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
+  // Load project config (if exists, don't create)
   try {
-    const content = readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(content);
-    // Deep merge user config with defaults
-    return {
-      commit: { ...DEFAULT_JSON_CONFIG.commit, ...parsed.commit },
-      changelog: { ...DEFAULT_JSON_CONFIG.changelog, ...parsed.changelog },
-      release: { ...DEFAULT_JSON_CONFIG.release, ...parsed.release },
-      general: { ...DEFAULT_JSON_CONFIG.general, ...parsed.general },
-    };
-  } catch (error) {
-    // If parsing fails, return defaults
-    console.warn(`Failed to parse config.json: ${error}. Using defaults.`);
-    return DEFAULT_JSON_CONFIG;
+    const repoRoot = await getRepoRoot();
+    const projectPath = join(repoRoot, CONFIG_DIR, JSON_CONFIG_FILE);
+
+    if (existsSync(projectPath)) {
+      try {
+        const projectContent = readFileSync(projectPath, "utf-8");
+        const projectConfig = JSON.parse(projectContent) as Partial<OcConfig>;
+        config = mergeConfigs(config, projectConfig);
+      } catch (error) {
+        console.warn(
+          `[oc] Warning: Could not parse project config at '${projectPath}'. Using global config. Error: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  } catch {
+    // Not in a git repo, use global only
   }
+
+  return config;
 }

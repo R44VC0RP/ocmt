@@ -29,7 +29,8 @@ AI-powered git commit message, changelog & documentation generator using [openco
 - **AI-powered commit messages** - Generates conventional commit messages from your staged changes
 - **Changelog generation** - Create changelogs from your commit history
 - **Interactive CLI** - Beautiful terminal UI with confirmation prompts
-- **Customizable** - Edit `.oc/config.md` to customize commit message rules
+- **Customizable** - Edit `.oc/config.md` to customize commit message rules and models
+- **Global + project config** - Set defaults in `~/.oc/`, override per-project
 - **Multiple aliases** - Use `oc`, `ocmt`, or `opencommit`
 
 ## Installation
@@ -110,9 +111,68 @@ oc changelog -f v1.0.0 -t v2.0.0
 
 ## Configuration
 
-On first run, ocmt creates a `.oc/` directory in your repository root with configuration files:
+ocmt uses a layered configuration system with global defaults and project-level overrides.
 
-### `.oc/config.md` - Commit Message Rules
+### Config Locations
+
+| Location | Purpose |
+|----------|---------|
+| `~/.oc/` | Global config (applies to all projects) |
+| `<repo>/.oc/` | Project config (overrides global settings) |
+
+On first run, ocmt creates the global `~/.oc/` directory with default configuration files. Project-level `.oc/` folders are optional and only used if they exist.
+
+### `config.json` - Settings
+
+Configure models, behavior, and preferences:
+
+```json
+{
+  "commit": {
+    "autoAccept": false,
+    "autoStageAll": false,
+    "model": "opencode/gpt-5-nano"
+  },
+  "changelog": {
+    "autoSave": false,
+    "outputFile": "CHANGELOG.md",
+    "model": "opencode/claude-sonnet-4-5"
+  },
+  "release": {
+    "autoTag": false,
+    "autoPush": false,
+    "tagPrefix": "v"
+  },
+  "general": {
+    "confirmPrompts": true,
+    "verbose": false
+  }
+}
+```
+
+#### Model Configuration
+
+Models are specified in `provider/model` format:
+
+```json
+{
+  "commit": {
+    "model": "opencode/gpt-5-nano"
+  },
+  "changelog": {
+    "model": "opencode/claude-sonnet-4-5"
+  }
+}
+```
+
+You can use any model supported by your provider. For example:
+- `opencode/gpt-5-nano`
+- `opencode/claude-sonnet-4-5`
+- `github-copilot/gpt-4`
+
+Refrence [models.dev](https://models.dev/) for proper syntax supported by OpenCode
+
+### `config.md` - Commit Message Rules
 
 Controls how AI generates commit messages. Default uses [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -133,11 +193,23 @@ Controls how AI generates commit messages. Default uses [Conventional Commits](h
 ...
 ```
 
-### `.oc/changelog.md` - Changelog Rules
+### `changelog.md` - Changelog Rules
 
 Controls changelog generation format. Default uses [Keep a Changelog](https://keepachangelog.com/) format.
 
-Edit these files to customize AI behavior for your project.
+### Config Resolution
+
+Settings are merged in this order (later overrides earlier):
+
+```
+1. Built-in defaults
+      ↓
+2. ~/.oc/config.json (global)
+      ↓
+3. <repo>/.oc/config.json (project)
+```
+
+For JSON config, individual fields are deep-merged. For markdown configs (`config.md`, `changelog.md`), the project file completely replaces the global file if it exists.
 
 ## Commands
 
@@ -172,12 +244,14 @@ Edit these files to customize AI behavior for your project.
 4. **Confirms with you** - Shows the proposed message for approval/editing
 5. **Commits** - Creates the commit with the final message
 
-### Models Used
+### Default Models
 
-| Feature | Provider | Model |
-|---------|----------|-------|
-| Commit messages | opencode | gpt-5-nano |
-| Changelogs | opencode | claude-sonnet-4-5 |
+| Feature | Default Model |
+|---------|---------------|
+| Commit messages | `opencode/gpt-5-nano` |
+| Changelogs | `opencode/claude-sonnet-4-5` |
+
+Models are configurable in `~/.oc/config.json` or `<repo>/.oc/config.json`. See [Configuration](#configuration) for details.
 
 ## Examples
 
