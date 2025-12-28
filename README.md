@@ -44,8 +44,8 @@ AI-powered git commit message, changelog & documentation generator using [openco
 #### Install OpenCode
 
 ```bash
-# npm
-npm install -g opencode
+bun add -g opencode-ai
+npm install -g opencode-ai
 
 # or brew
 brew install sst/tap/opencode
@@ -59,6 +59,7 @@ opencode auth
 
 ### Install ocmt
 
+> **Note:** iHildy's fork of ocmt requires [Bun](https://bun.sh) - it does not work with Node.js due to the `critique` dependency.
 ```bash
 # bun (recommended)
 bun install -g ocmt
@@ -66,12 +67,7 @@ bun install -g ocmt
 
 # npm
 npm install -g ocmt
-
-# pnpm
-pnpm install -g ocmt
-
-# yarn
-yarn global add ocmt
+# missing deslop feature
 ```
 
 Note: deslop review uses `critique`, which runs on Bun. If Bun isn't installed,
