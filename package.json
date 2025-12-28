@@ -14,7 +14,8 @@
     "dev": "bun --watch src/cli.ts",
     "build": "bun build src/cli.ts --outdir=dist --target=node --format=esm && bun build src/index.ts --outdir=dist --target=node --format=esm",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "test-local": "bun run typecheck && bun run build && bun link"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -47,6 +48,7 @@
     "@clack/prompts": "^0.11.0",
     "@opencode-ai/sdk": "^1.0.155",
     "commander": "^12.1.0",
+    "critique": "^0.1.8",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

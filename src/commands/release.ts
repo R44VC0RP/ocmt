@@ -16,6 +16,7 @@ import {
 } from "../utils/git";
 import { generateCommitMessage, generateChangelog, updateChangelogFile, cleanup } from "../lib/opencode";
 import { maybeCreateBranchForCommit } from "../lib/branch";
+import { maybeDeslopStagedChanges } from "../lib/deslop";
 import {
   addHistoryEntry,
   getLastEntry,
@@ -180,45 +181,63 @@ export async function releaseCommand(options: ReleaseOptions): Promise<void> {
       p.log.success(`Staged changes:\n${stagedPreview}${moreCount > 0 ? `\n  ${color.dim(`...and ${moreCount} more`)}` : ""}`);
 
       // Get diff and generate commit message
-      const diff = await getStagedDiff();
+      let diff = await getStagedDiff();
       
       if (diff) {
-        const branchFlow = await maybeCreateBranchForCommit({
-          diff,
+        const deslopResult = await maybeDeslopStagedChanges({
+          stagedDiff: diff,
           yes: options.yes,
         });
 
-        if (branchFlow === "abort") {
+        if (deslopResult === "abort") {
           cleanup();
           process.exit(0);
         }
 
-        const genSpinner = p.spinner();
-        genSpinner.start("Generating commit message");
-        
-        const commitMessage = await generateCommitMessage({ diff });
-        genSpinner.stop("Commit message generated");
+        if (deslopResult === "updated") {
+          diff = await getStagedDiff();
+        }
 
-        p.log.info(`Commit message: ${color.cyan(`"${commitMessage}"`)}`);
-
-        if (!options.yes) {
-          const confirmCommit = await p.confirm({
-            message: "Commit with this message?",
-            initialValue: true,
+        if (!diff) {
+          p.log.info(color.dim("No staged diff to commit after deslop"));
+        } else {
+          const branchFlow = await maybeCreateBranchForCommit({
+            diff,
+            yes: options.yes,
           });
 
-          if (p.isCancel(confirmCommit) || !confirmCommit) {
-            p.cancel("Aborted");
+          if (branchFlow === "abort") {
             cleanup();
             process.exit(0);
           }
-        }
 
-        const commitSpinner = p.spinner();
-        commitSpinner.start("Committing");
-        await commit(commitMessage);
-        commitSpinner.stop("Changes committed");
-        madeCommit = true;
+          const genSpinner = p.spinner();
+          genSpinner.start("Generating commit message");
+          
+          const commitMessage = await generateCommitMessage({ diff });
+          genSpinner.stop("Commit message generated");
+
+          p.log.info(`Commit message: ${color.cyan(`"${commitMessage}"`)}`);
+
+          if (!options.yes) {
+            const confirmCommit = await p.confirm({
+              message: "Commit with this message?",
+              initialValue: true,
+            });
+
+            if (p.isCancel(confirmCommit) || !confirmCommit) {
+              p.cancel("Aborted");
+              cleanup();
+              process.exit(0);
+            }
+          }
+
+          const commitSpinner = p.spinner();
+          commitSpinner.start("Committing");
+          await commit(commitMessage);
+          commitSpinner.stop("Changes committed");
+          madeCommit = true;
+        }
       }
     }
   } else {

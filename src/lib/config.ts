@@ -69,6 +69,9 @@ export interface OcConfig {
     autoCreateBranchOnDefault?: boolean;
     autoCreateBranchOnNonDefault?: boolean;
     forceNewBranchOnDefault?: boolean;
+    autoDeslop?: boolean;
+    branchModel?: string; // format: "provider/model"
+    deslopModel?: string; // format: "provider/model"
     model?: string; // format: "provider/model"
   };
   changelog?: {
@@ -94,6 +97,9 @@ const DEFAULT_JSON_CONFIG: OcConfig = {
     autoCreateBranchOnDefault: true,
     autoCreateBranchOnNonDefault: false,
     forceNewBranchOnDefault: false,
+    autoDeslop: false,
+    branchModel: "opencode/gpt-5-nano",
+    deslopModel: "opencode/gpt-5-mini",
     model: "opencode/gpt-5-nano",
   },
   changelog: {
@@ -203,7 +209,7 @@ async function getRepoRoot(): Promise<string> {
  */
 async function getLayeredTextConfig(
   fileName: string,
-  defaultContent: string
+  defaultContent: string,
 ): Promise<string> {
   // Check project config first
   try {
@@ -277,7 +283,7 @@ export async function getConfig(): Promise<OcConfig> {
     writeFileSync(
       globalPath,
       JSON.stringify(DEFAULT_JSON_CONFIG, null, 2),
-      "utf-8"
+      "utf-8",
     );
   } else {
     try {
@@ -286,7 +292,7 @@ export async function getConfig(): Promise<OcConfig> {
       config = mergeConfigs(config, globalConfig);
     } catch (error) {
       console.warn(
-        `[oc] Warning: Could not parse global config at '${globalPath}'. Using defaults. Error: ${error instanceof Error ? error.message : String(error)}`
+        `[oc] Warning: Could not parse global config at '${globalPath}'. Using defaults. Error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -303,7 +309,7 @@ export async function getConfig(): Promise<OcConfig> {
         config = mergeConfigs(config, projectConfig);
       } catch (error) {
         console.warn(
-          `[oc] Warning: Could not parse project config at '${projectPath}'. Using global config. Error: ${error instanceof Error ? error.message : String(error)}`
+          `[oc] Warning: Could not parse project config at '${projectPath}'. Using global config. Error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }

@@ -68,6 +68,24 @@ async function getCommitModel(): Promise<ModelConfig> {
 }
 
 /**
+ * Get the model config for branch name generation from user config
+ */
+async function getBranchModel(): Promise<ModelConfig> {
+  const config = await getConfig();
+  const modelStr = config.commit?.branchModel || config.commit?.model || DEFAULT_COMMIT_MODEL;
+  return parseModelString(modelStr);
+}
+
+/**
+ * Get the model config for deslop generation from user config
+ */
+async function getDeslopModel(): Promise<ModelConfig> {
+  const config = await getConfig();
+  const modelStr = config.commit?.deslopModel || config.commit?.model || DEFAULT_COMMIT_MODEL;
+  return parseModelString(modelStr);
+}
+
+/**
  * Get the model config for changelog generation from user config
  */
 async function getChangelogModel(): Promise<ModelConfig> {
@@ -88,6 +106,18 @@ export interface CommitGenerationOptions {
 export interface BranchGenerationOptions {
   diff: string;
   context?: string;
+}
+
+export interface DeslopGenerationOptions {
+  stagedDiff: string;
+  baseDiff?: string;
+  baseRef?: string;
+  extraPrompt?: string;
+}
+
+export interface DeslopGenerationResult {
+  patch: string;
+  summary: string | null;
 }
 
 export interface ChangelogGenerationOptions {
@@ -211,9 +241,13 @@ function extractTextFromParts(parts: any[]): string {
 /**
  * Run a prompt using the commit model
  */
-async function runCommitPrompt(title: string, prompt: string): Promise<string> {
+async function runCommitPrompt(
+  title: string,
+  prompt: string,
+  modelOverride?: ModelConfig
+): Promise<string> {
   const client = await getClient();
-  const commitModel = await getCommitModel();
+  const commitModel = modelOverride ?? (await getCommitModel());
 
   const session = await client.session.create({
     body: { title },
@@ -298,7 +332,82 @@ export async function generateBranchName(
     prompt += `\n\nAdditional context: ${context}`;
   }
 
-  return runCommitPrompt("oc-branch", prompt);
+  const branchModel = await getBranchModel();
+  return runCommitPrompt("oc-branch", prompt, branchModel);
+}
+
+function extractDeslopResult(text: string): DeslopGenerationResult {
+  const diffBlockMatch = text.match(/```diff\s*([\s\S]*?)```/i);
+  let patch = diffBlockMatch ? diffBlockMatch[1].trim() : "";
+
+  if (!patch) {
+    const patchSectionMatch = text.match(/PATCH:\s*([\s\S]*?)(?:SUMMARY:|$)/i);
+    if (patchSectionMatch) {
+      patch = patchSectionMatch[1].trim();
+    }
+  }
+
+  let summary: string | null = null;
+  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*)$/i);
+  if (summaryMatch) {
+    summary = summaryMatch[1].trim();
+  } else {
+    const afterDiff = diffBlockMatch
+      ? text.slice(diffBlockMatch.index! + diffBlockMatch[0].length).trim()
+      : "";
+    summary = afterDiff || null;
+  }
+
+  return { patch, summary };
+}
+
+/**
+ * Generate a patch that removes AI slop from staged changes
+ */
+export async function generateDeslopPatch(
+  options: DeslopGenerationOptions
+): Promise<DeslopGenerationResult> {
+  const { stagedDiff, baseDiff, baseRef = "main", extraPrompt } = options;
+
+  let prompt = `# Remove AI code slop
+
+Check the diff against ${baseRef}, and remove all AI generated slop introduced in this branch.
+
+This includes:
+- Extra comments that a human wouldn't add or is inconsistent with the rest of the file
+- Extra defensive checks or try/catch blocks that are abnormal for that area of the codebase (especially if called by trusted / validated codepaths)
+- Casts to any to get around type issues
+- Any other style that is inconsistent with the file
+
+Report at the end with only a 1-3 sentence summary of what you changed.
+
+Return output in this format:
+PATCH:
+\`\`\`diff
+<unified diff to apply to the working tree and index>
+\`\`\`
+SUMMARY:
+<1-3 sentences>
+
+If no changes are needed, return an empty diff block and a summary saying no changes were required.
+
+Diff against ${baseRef}:
+\`\`\`diff
+${baseDiff || ""}
+\`\`\`
+
+Staged diff to clean up:
+\`\`\`diff
+${stagedDiff}
+\`\`\``;
+
+  if (extraPrompt?.trim()) {
+    prompt += `\n\nAdditional constraints from the user:\n${extraPrompt.trim()}\n`;
+  }
+
+  const deslopModel = await getDeslopModel();
+  const response = await runCommitPrompt("oc-deslop", prompt, deslopModel);
+  return extractDeslopResult(response);
 }
 
 /**

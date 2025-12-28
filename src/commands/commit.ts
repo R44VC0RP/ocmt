@@ -9,6 +9,7 @@ import {
   type GitStatus,
 } from "../utils/git";
 import { generateCommitMessage, cleanup } from "../lib/opencode";
+import { maybeDeslopStagedChanges } from "../lib/deslop";
 import { maybeCreateBranchForCommit } from "../lib/branch";
 
 export interface CommitOptions {
@@ -89,12 +90,31 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   p.log.success(`Staged changes:\n${stagedFiles}`);
 
   // Get the diff
-  const diff = await getStagedDiff();
+  let diff = await getStagedDiff();
 
   if (!diff) {
     p.outro(color.yellow("No diff content to analyze"));
     cleanup();
     process.exit(0);
+  }
+
+  const deslopResult = await maybeDeslopStagedChanges({
+    stagedDiff: diff,
+    yes: options.yes,
+  });
+
+  if (deslopResult === "abort") {
+    cleanup();
+    process.exit(0);
+  }
+
+  if (deslopResult === "updated") {
+    diff = await getStagedDiff();
+    if (!diff) {
+      p.outro(color.yellow("No diff content to analyze"));
+      cleanup();
+      process.exit(0);
+    }
   }
 
   // Show diff summary

@@ -39,6 +39,7 @@ AI-powered git commit message, changelog & documentation generator using [openco
 
 - Node.js >= 18.0.0
 - [OpenCode](https://opencode.ai) installed and authenticated
+- [Bun](https://bun.sh) (required for deslop review via critique)
 
 #### Install OpenCode
 
@@ -61,6 +62,7 @@ opencode auth
 ```bash
 # bun (recommended)
 bun install -g ocmt
+# includes critique for deslop review
 
 # npm
 npm install -g ocmt
@@ -71,6 +73,9 @@ pnpm install -g ocmt
 # yarn
 yarn global add ocmt
 ```
+
+Note: deslop review uses `critique`, which runs on Bun. If Bun isn't installed,
+ocmt will skip the review step.
 
 ## Usage
 
@@ -131,6 +136,12 @@ Configure models, behavior, and preferences:
   "commit": {
     "autoAccept": false,
     "autoStageAll": false,
+    "autoCreateBranchOnDefault": true,
+    "autoCreateBranchOnNonDefault": false,
+    "forceNewBranchOnDefault": false,
+    "autoDeslop": false,
+    "branchModel": "opencode/gpt-5-nano",
+    "deslopModel": "opencode/gpt-5",
     "model": "opencode/gpt-5-nano"
   },
   "changelog": {
@@ -157,7 +168,9 @@ Models are specified in `provider/model` format:
 ```json
 {
   "commit": {
-    "model": "opencode/gpt-5-nano"
+    "model": "opencode/gpt-5-nano",
+    "branchModel": "opencode/gpt-5-nano",
+    "deslopModel": "opencode/gpt-5"
   },
   "changelog": {
     "model": "opencode/claude-sonnet-4-5"
@@ -240,15 +253,19 @@ For JSON config, individual fields are deep-merged. For markdown configs (`confi
 
 1. **Connects to OpenCode** - Tries to connect to an existing OpenCode server, or spawns a new one
 2. **Analyzes your changes** - Reads the staged git diff
-3. **Generates message** - Sends diff to AI with your configured rules
-4. **Confirms with you** - Shows the proposed message for approval/editing
-5. **Commits** - Creates the commit with the final message
+3. **Optional deslop** - Cleans AI slop from staged changes (if enabled). Review and accept/reject via `critique`.
+4. **Optional branch** - Creates a new branch with an AI-generated name (if enabled)
+5. **Generates message** - Sends diff to AI with your configured rules
+6. **Confirms with you** - Shows the proposed message for approval/editing
+7. **Commits** - Creates the commit with the final message
 
 ### Default Models
 
 | Feature | Default Model |
 |---------|---------------|
 | Commit messages | `opencode/gpt-5-nano` |
+| Branch names | `opencode/gpt-5-nano` |
+| Deslop | `opencode/gpt-5` |
 | Changelogs | `opencode/claude-sonnet-4-5` |
 
 Models are configurable in `~/.oc/config.json` or `<repo>/.oc/config.json`. See [Configuration](#configuration) for details.
