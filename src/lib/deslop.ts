@@ -1,13 +1,12 @@
 import * as p from "@clack/prompts";
 import color from "picocolors";
 import { spawn } from "child_process";
-import { existsSync, writeFileSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
+import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { getConfig } from "./config";
-import { generateDeslopPatch } from "./opencode";
-import { git, getDiffBetween, getStagedDiff } from "../utils/git";
+import { runDeslopEdits } from "./opencode";
+import { getDiffBetween, getStagedDiff, getStatus, stageFiles } from "../utils/git";
 
 export type DeslopFlowResult = "continue" | "abort" | "updated";
 
@@ -15,30 +14,6 @@ export interface DeslopFlowOptions {
   stagedDiff?: string;
   yes?: boolean;
   extraPrompt?: string;
-}
-
-function createTempPatchPath(): string {
-  const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return join(tmpdir(), `oc-deslop-${stamp}.patch`);
-}
-
-function hasValidPatch(patch: string): boolean {
-  return /^diff --git /m.test(patch) || /^---\s/m.test(patch);
-}
-
-async function applyPatch(patch: string, reverse: boolean = false): Promise<void> {
-  const patchPath = createTempPatchPath();
-  writeFileSync(patchPath, patch, "utf-8");
-  try {
-    const reverseFlag = reverse ? "--reverse " : "";
-    await git(`apply --index --whitespace=nowarn ${reverseFlag}"${patchPath}"`);
-  } finally {
-    try {
-      unlinkSync(patchPath);
-    } catch {
-      // Ignore cleanup errors
-    }
-  }
 }
 
 async function getBaseDiff(): Promise<{ baseRef: string; diff: string }> {
@@ -167,38 +142,69 @@ export async function maybeDeslopStagedChanges(
     extraPrompt = extraValue.trim() || undefined;
   }
 
+  const statusBefore = await getStatus();
+  const stagedFiles = statusBefore.staged;
+  const overlapping = statusBefore.unstaged.filter((file) =>
+    stagedFiles.includes(file)
+  );
+
+  if (overlapping.length > 0 && !options.yes) {
+    p.log.warn(
+      "Unstaged edits detected in staged files. Deslop will restage those files."
+    );
+    const overlapList = overlapping
+      .map((file) => `  ${color.dim(file)}`)
+      .join("\n");
+    p.log.info(`Affected files:\n${overlapList}`);
+
+    const proceed = await p.confirm({
+      message: "Continue deslop and restage staged files?",
+      initialValue: false,
+    });
+
+    if (p.isCancel(proceed) || !proceed) {
+      p.cancel("Aborted");
+      return "abort";
+    }
+  }
+
   const s = p.spinner();
   s.start("Deslopping staged changes");
 
+  let deslopSession: Awaited<ReturnType<typeof runDeslopEdits>> | null = null;
+
   try {
-    const result = await generateDeslopPatch({
+    deslopSession = await runDeslopEdits({
       stagedDiff,
       baseDiff,
       baseRef,
       extraPrompt,
+      stagedFiles,
     });
 
-    if (result.patch && hasValidPatch(result.patch)) {
-      await applyPatch(result.patch);
-      s.stop("Deslop applied (review pending)");
-    } else {
-      s.stop("No deslop changes needed");
-    }
+    await stageFiles(stagedFiles);
+    const updatedDiff = await getStagedDiff();
 
-    const summary = result.summary?.trim();
+    const summary = deslopSession.summary?.trim();
     const fallbackSummary = "Deslop completed with minor cleanup adjustments.";
+    const didChange = !!updatedDiff && updatedDiff !== stagedDiff;
 
-    if (!result.patch || !hasValidPatch(result.patch)) {
+    if (!didChange) {
+      s.stop("No deslop changes needed");
       if (summary) {
         p.log.step(summary);
       } else {
         p.log.step("No deslop changes were required.");
       }
+      deslopSession.close();
       return "continue";
     }
 
+    s.stop("Deslop applied (review pending)");
+
     if (options.yes) {
       p.log.step(summary || fallbackSummary);
+      deslopSession.close();
       return "updated";
     }
 
@@ -220,21 +226,35 @@ export async function maybeDeslopStagedChanges(
     });
 
     if (p.isCancel(action)) {
-      await applyPatch(result.patch, true);
+      await deslopSession.revert();
+      await stageFiles(stagedFiles);
+      deslopSession.close();
       p.cancel("Aborted");
       return "abort";
     }
 
     if (action === "reject") {
-      await applyPatch(result.patch, true);
+      await deslopSession.revert();
+      await stageFiles(stagedFiles);
+      deslopSession.close();
       p.log.info(color.dim("Deslop changes reverted"));
       return "continue";
     }
 
     p.log.step(summary || fallbackSummary);
+    deslopSession.close();
     return "updated";
   } catch (error: any) {
     s.stop("Deslop failed");
+    if (deslopSession) {
+      try {
+        await deslopSession.revert();
+        await stageFiles(stagedFiles);
+      } catch {
+        // Ignore cleanup errors
+      }
+      deslopSession.close();
+    }
     p.cancel(error.message);
     return "abort";
   }

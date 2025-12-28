@@ -27,7 +27,7 @@ function normalizeBranchName(name: string): string {
 
 async function resolveBranchName(
   diff: string,
-  yes?: boolean
+  yes?: boolean,
 ): Promise<string | null> {
   const s = p.spinner();
   s.start("Generating branch name");
@@ -115,7 +115,7 @@ async function resolveBranchName(
 
 async function ensureUniqueBranchName(
   name: string,
-  yes?: boolean
+  yes?: boolean,
 ): Promise<string | null> {
   let branchName = name;
 
@@ -147,7 +147,7 @@ async function ensureUniqueBranchName(
 }
 
 export async function maybeCreateBranchForCommit(
-  options: BranchFlowOptions
+  options: BranchFlowOptions,
 ): Promise<BranchFlowResult> {
   const { diff, yes } = options;
   const config = await getConfig();
@@ -158,8 +158,7 @@ export async function maybeCreateBranchForCommit(
   }
 
   const defaultBranch = await getDefaultBranch();
-  const isDefaultBranch =
-    defaultBranch && currentBranch === defaultBranch;
+  const isDefaultBranch = defaultBranch && currentBranch === defaultBranch;
 
   const forceOnDefault = !!config.commit?.forceNewBranchOnDefault;
   const autoOnDefault = !!config.commit?.autoCreateBranchOnDefault;
