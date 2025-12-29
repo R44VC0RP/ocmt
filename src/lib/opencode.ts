@@ -31,7 +31,6 @@ interface ModelConfig {
  * Falls back to "opencode" provider if no slash is present
  */
 function parseModelString(modelStr: string): ModelConfig {
-  // Validate input is not empty
   const trimmedInput = modelStr.trim();
   if (!trimmedInput) {
     throw new Error(
@@ -44,7 +43,6 @@ function parseModelString(modelStr: string): ModelConfig {
     const providerID = trimmedInput.substring(0, slashIndex).trim();
     const modelID = trimmedInput.substring(slashIndex + 1).trim();
 
-    // Validate both parts are non-empty
     if (!providerID || !modelID) {
       throw new Error(
         "Invalid model string: expected 'provider/model' with non-empty parts"
@@ -54,8 +52,11 @@ function parseModelString(modelStr: string): ModelConfig {
     return { providerID, modelID };
   }
 
-  // Default to "opencode" provider if no slash
   return { providerID: "opencode", modelID: trimmedInput };
+}
+
+function formatModelID(model: ModelConfig): string {
+  return `${model.providerID}/${model.modelID}`;
 }
 
 /**
@@ -64,6 +65,24 @@ function parseModelString(modelStr: string): ModelConfig {
 async function getCommitModel(): Promise<ModelConfig> {
   const config = await getConfig();
   const modelStr = config.commit?.model || DEFAULT_COMMIT_MODEL;
+  return parseModelString(modelStr);
+}
+
+/**
+ * Get the model config for branch name generation from user config
+ */
+async function getBranchModel(): Promise<ModelConfig> {
+  const config = await getConfig();
+  const modelStr = config.commit?.branchModel || config.commit?.model || DEFAULT_COMMIT_MODEL;
+  return parseModelString(modelStr);
+}
+
+/**
+ * Get the model config for deslop generation from user config
+ */
+async function getDeslopModel(): Promise<ModelConfig> {
+  const config = await getConfig();
+  const modelStr = config.commit?.deslopModel || config.commit?.model || DEFAULT_COMMIT_MODEL;
   return parseModelString(modelStr);
 }
 
@@ -79,10 +98,32 @@ async function getChangelogModel(): Promise<ModelConfig> {
 // Server state
 let clientInstance: OpencodeClient | null = null;
 let serverInstance: { close: () => void } | null = null;
+const DEFAULT_OPENCODE_URL = "http://localhost:4096";
 
 export interface CommitGenerationOptions {
   diff: string;
   context?: string;
+}
+
+export interface BranchGenerationOptions {
+  diff: string;
+  context?: string;
+}
+
+export interface DeslopGenerationOptions {
+  stagedDiff: string;
+  baseDiff?: string;
+  baseRef?: string;
+  extraPrompt?: string;
+  stagedFiles?: string[];
+  notStagedFiles?: string[];
+}
+
+export interface DeslopEditResult {
+  summary: string | null;
+  sessionID: string;
+  messageID: string;
+  close: () => Promise<void>;
 }
 
 export interface ChangelogGenerationOptions {
@@ -132,10 +173,26 @@ async function getClient(): Promise<OpencodeClient> {
     return clientInstance;
   }
 
+  const envBaseUrl = process.env.OPENCODE_SERVER_URL || process.env.OPENCODE_URL;
+  if (envBaseUrl?.trim()) {
+    try {
+      const client = createOpencodeClient({
+        baseUrl: envBaseUrl.trim(),
+      });
+      await client.config.get();
+      clientInstance = client;
+      return client;
+    } catch {
+      p.log.warn(
+        `Failed to connect to OpenCode server at ${envBaseUrl}. Falling back to local server.`
+      );
+    }
+  }
+
   // Try connecting to existing server first
   try {
     const client = createOpencodeClient({
-      baseUrl: "http://localhost:4096",
+      baseUrl: DEFAULT_OPENCODE_URL,
     });
     // Test connection
     await client.config.get();
@@ -203,6 +260,195 @@ function extractTextFromParts(parts: any[]): string {
   return textParts.trim();
 }
 
+function extractDeslopSummary(text: string): string | null {
+  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*)$/i);
+  if (summaryMatch) {
+    return summaryMatch[1].trim();
+  }
+
+  const trimmed = text.trim();
+  return trimmed ? trimmed : null;
+}
+
+interface OpencodePromptOptions {
+  title: string;
+  prompt: string;
+  model: ModelConfig;
+  agent?: string;
+  tools?: Record<string, boolean>;
+  directory?: string;
+}
+
+interface OpencodePromptResult {
+  message: string;
+  sessionID: string;
+  messageID: string;
+  close: () => Promise<void>;
+}
+
+async function runOpencodePrompt(
+  options: OpencodePromptOptions
+): Promise<OpencodePromptResult> {
+  const { title, prompt, model, agent, tools, directory } = options;
+  const client = await getClient();
+  const modelID = formatModelID(model);
+
+  const session = await client.session.create({
+    body: { title },
+  });
+
+  if (!session.data) {
+    throw new Error("Failed to create session");
+  }
+
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    try {
+      await client.session.delete({ path: { id: session.data.id } });
+    } catch {
+      // Ignore cleanup errors
+    }
+  };
+
+  let result;
+  try {
+    result = await client.session.prompt({
+      path: { id: session.data.id },
+      ...(directory ? { query: { directory } } : {}),
+      body: {
+        model,
+        parts: [{ type: "text", text: prompt }],
+        ...(agent ? { agent } : {}),
+        ...(tools ? { tools } : {}),
+      },
+    });
+  } catch (err: any) {
+    await close();
+    throw new Error(`Model request failed (${modelID}): ${err.message}`);
+  }
+
+  if (!result.data) {
+    await close();
+    throw new Error(`Failed to get AI response from ${modelID}`);
+  }
+
+  const message = extractTextFromParts(result.data.parts || []);
+
+  if (!message) {
+    await close();
+    throw new Error(
+      `No response generated by ${modelID}. Response: ${JSON.stringify(result.data)}`
+    );
+  }
+
+  return {
+    message,
+    sessionID: session.data.id,
+    messageID: result.data.info.id,
+    close,
+  };
+}
+
+function buildDeslopPrompt(options: DeslopGenerationOptions): string {
+  const {
+    stagedDiff,
+    baseDiff,
+    baseRef = "main",
+    extraPrompt,
+    stagedFiles,
+    notStagedFiles,
+  } = options;
+  const filesList =
+    stagedFiles && stagedFiles.length > 0
+      ? stagedFiles.map((file) => `- ${file}`).join("\n")
+      : "";
+  const notStagedList =
+    notStagedFiles && notStagedFiles.length > 0
+      ? notStagedFiles.map((file) => `- ${file}`).join("\n")
+      : "";
+
+  let prompt = `# Remove AI code slop
+
+Edit files directly using the available tools. Do not output a patch. Apply changes in place.
+
+Rules:
+- Only edit files listed under "Staged files" (if provided)
+- Do not edit files listed under "Not staged files" (if provided)
+- Do not edit any file that is not staged
+- Do not create new files
+- Remove AI-generated slop (unnecessary comments, excessive defensive code, inconsistent style)
+- Keep changes minimal and consistent with the codebase
+
+Respond with:
+SUMMARY: <1-3 sentences>
+
+If no changes are needed, do not edit any files and respond with:
+SUMMARY: No changes required.
+`;
+
+  if (filesList) {
+    prompt += `\nStaged files:\n${filesList}\n`;
+  }
+  if (notStagedList) {
+    prompt += `\nNot staged files:\n${notStagedList}\n`;
+  }
+
+  prompt += `\nDiff against ${baseRef}:\n\`\`\`diff\n${baseDiff || ""}\n\`\`\`\n\nStaged diff to clean up:\n\`\`\`diff\n${stagedDiff}\n\`\`\``;
+
+  if (extraPrompt?.trim()) {
+    prompt += `\n\nAdditional constraints from the user:\n${extraPrompt.trim()}\n`;
+  }
+
+  return prompt;
+}
+
+export async function runDeslopEdits(
+  options: DeslopGenerationOptions
+): Promise<DeslopEditResult> {
+  const deslopModel = await getDeslopModel();
+  const prompt = buildDeslopPrompt(options);
+
+  const { message, sessionID, messageID, close } = await runOpencodePrompt({
+    title: "oc-deslop",
+    prompt,
+    model: deslopModel,
+    directory: process.cwd(),
+  });
+  const summary = extractDeslopSummary(message);
+
+  return {
+    summary,
+    sessionID,
+    messageID,
+    close,
+  };
+}
+/**
+ * Run a prompt using the commit model
+ */
+async function runCommitPrompt(
+  title: string,
+  prompt: string,
+  modelOverride?: ModelConfig
+): Promise<string> {
+  const commitModel = modelOverride ?? (await getCommitModel());
+  const { message, close } = await runOpencodePrompt({
+    title,
+    prompt,
+    model: commitModel,
+  });
+
+  await close();
+  return message
+    .replace(/^```[\s\S]*?\n/, "")
+    .replace(/\n```$/, "")
+    .trim();
+}
+
 /**
  * Generate a commit message from a git diff using OpenCode AI
  */
@@ -211,18 +457,7 @@ export async function generateCommitMessage(
 ): Promise<string> {
   const { diff, context } = options;
 
-  const client = await getClient();
   const systemPrompt = await getCommitConfig();
-  const commitModel = await getCommitModel();
-
-  // Create a session for this commit
-  const session = await client.session.create({
-    body: { title: "oc-commit" },
-  });
-
-  if (!session.data) {
-    throw new Error("Failed to create session");
-  }
 
   // Build the prompt
   let prompt = `${systemPrompt}\n\n---\n\nGenerate a commit message for the following diff:\n\n\`\`\`diff\n${diff}\n\`\`\``;
@@ -231,48 +466,29 @@ export async function generateCommitMessage(
     prompt += `\n\nAdditional context: ${context}`;
   }
 
-  // Send the prompt
-  let result;
-  try {
-    result = await client.session.prompt({
-      path: { id: session.data.id },
-      body: {
-        model: commitModel,
-        parts: [{ type: "text", text: prompt }],
-      },
-    });
-  } catch (err: any) {
-    await client.session.delete({ path: { id: session.data.id } });
-    throw new Error(
-      `Model request failed (${commitModel.providerID}/${commitModel.modelID}): ${err.message}`
-    );
-  }
-
-  if (!result.data) {
-    await client.session.delete({ path: { id: session.data.id } });
-    throw new Error(
-      `Failed to get AI response from ${commitModel.providerID}/${commitModel.modelID}`
-    );
-  }
-
-  // Extract the commit message from the response
-  const message = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!message) {
-    throw new Error(
-      `No commit message generated by ${commitModel.providerID}/${commitModel.modelID}. Response: ${JSON.stringify(result.data)}`
-    );
-  }
-
-  // Clean up the message (remove markdown code blocks if present)
-  return message
-    .replace(/^```[\s\S]*?\n/, "")
-    .replace(/\n```$/, "")
-    .trim();
+  return runCommitPrompt("oc-commit", prompt);
 }
+
+/**
+ * Generate a branch name from a git diff using OpenCode AI
+ */
+export async function generateBranchName(
+  options: BranchGenerationOptions
+): Promise<string> {
+  const { diff, context } = options;
+
+  const systemPrompt = await getCommitConfig();
+
+  let prompt = `${systemPrompt}\n\n---\n\nGenerate a concise git branch name for the following diff.\n\nRules:\n- Use lowercase letters\n- Use hyphens to separate words\n- Optional prefix like "feat/" or "fix/"\n- No spaces, quotes, or markdown\n- Keep it under 50 characters\n\nDiff:\n\`\`\`diff\n${diff}\n\`\`\``;
+
+  if (context) {
+    prompt += `\n\nAdditional context: ${context}`;
+  }
+
+  const branchModel = await getBranchModel();
+  return runCommitPrompt("oc-branch", prompt, branchModel);
+}
+
 
 /**
  * Generate a changelog from commits using OpenCode AI
@@ -281,19 +497,8 @@ export async function generateChangelog(
   options: ChangelogGenerationOptions
 ): Promise<string> {
   const { commits, fromRef, toRef, version } = options;
-
-  const client = await getClient();
   const systemPrompt = await getChangelogConfig();
   const changelogModel = await getChangelogModel();
-
-  // Create a session for this changelog
-  const session = await client.session.create({
-    body: { title: "oc-changelog" },
-  });
-
-  if (!session.data) {
-    throw new Error("Failed to create session");
-  }
 
   // Build the commits list
   const commitsList = commits
@@ -311,30 +516,14 @@ export async function generateChangelog(
   // Build the prompt
   const prompt = `${systemPrompt}\n\n---\n\nGenerate a changelog for the following commits (from ${fromRef} to ${toRef}):${versionInstruction}\n\n${commitsList}`;
 
-  // Send the prompt
-  const result = await client.session.prompt({
-    path: { id: session.data.id },
-    body: {
-      model: changelogModel,
-      parts: [{ type: "text", text: prompt }],
-    },
+  const { message, close } = await runOpencodePrompt({
+    title: "oc-changelog",
+    prompt,
+    model: changelogModel,
   });
+  await close();
 
-  if (!result.data) {
-    throw new Error("Failed to get AI response");
-  }
-
-  // Extract the changelog from the response
-  const changelog = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!changelog) {
-    throw new Error("No changelog generated");
-  }
-
-  return changelog.trim();
+  return message.trim();
 }
 
 /**
@@ -345,18 +534,7 @@ export async function updateChangelogFile(
   options: UpdateChangelogOptions
 ): Promise<string> {
   const { newChangelog, existingChangelog, changelogPath } = options;
-
-  const client = await getClient();
   const changelogModel = await getChangelogModel();
-
-  // Create a session for this update
-  const session = await client.session.create({
-    body: { title: "oc-changelog-update" },
-  });
-
-  if (!session.data) {
-    throw new Error("Failed to create session");
-  }
 
   const prompt = `You are updating a CHANGELOG.md file. Your task is to intelligently merge new changelog entries into the existing file.
 
@@ -381,28 +559,14 @@ ${newChangelog}
 
 Return the complete updated CHANGELOG.md content:`;
 
-  // Send the prompt
-  const result = await client.session.prompt({
-    path: { id: session.data.id },
-    body: {
-      model: changelogModel,
-      parts: [{ type: "text", text: prompt }],
-    },
+  const { message, close } = await runOpencodePrompt({
+    title: "oc-changelog-update",
+    prompt,
+    model: changelogModel,
   });
+  await close();
 
-  if (!result.data) {
-    throw new Error("Failed to get AI response");
-  }
-
-  // Extract the updated changelog
-  let updatedChangelog = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!updatedChangelog) {
-    throw new Error("No updated changelog generated");
-  }
+  let updatedChangelog = message;
 
   // Clean up markdown code blocks if present
   updatedChangelog = updatedChangelog

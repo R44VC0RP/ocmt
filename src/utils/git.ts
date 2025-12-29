@@ -102,6 +102,53 @@ export async function commit(message: string): Promise<string> {
 }
 
 /**
+ * Get the current branch name
+ */
+export async function getCurrentBranch(): Promise<string | null> {
+  try {
+    const branch = await git("rev-parse --abbrev-ref HEAD");
+    return branch || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a local branch exists
+ */
+export async function branchExists(branch: string): Promise<boolean> {
+  try {
+    await git(`show-ref --verify --quiet refs/heads/${branch}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the default branch name
+ */
+export async function getDefaultBranch(): Promise<string | null> {
+  try {
+    const ref = await git("symbolic-ref refs/remotes/origin/HEAD");
+    const parts = ref.split("/");
+    return parts[parts.length - 1] || null;
+  } catch {
+    if (await branchExists("main")) return "main";
+    if (await branchExists("master")) return "master";
+    return null;
+  }
+}
+
+/**
+ * Create and switch to a new branch
+ */
+export async function createBranch(name: string): Promise<void> {
+  const safeName = name.replace(/"/g, '\\"');
+  await git(`checkout -b "${safeName}"`);
+}
+
+/**
  * Get commit log
  */
 export async function getLog(

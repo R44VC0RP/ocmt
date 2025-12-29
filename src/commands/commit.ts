@@ -9,6 +9,8 @@ import {
   type GitStatus,
 } from "../utils/git";
 import { generateCommitMessage, cleanup } from "../lib/opencode";
+import { maybeDeslopStagedChanges, getAndValidateStagedDiff } from "../lib/deslop";
+import { maybeCreateBranchForCommit } from "../lib/branch";
 
 export interface CommitOptions {
   message?: string;
@@ -88,17 +90,43 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   p.log.success(`Staged changes:\n${stagedFiles}`);
 
   // Get the diff
-  const diff = await getStagedDiff();
-
+  let diff = await getAndValidateStagedDiff();
   if (!diff) {
-    p.outro(color.yellow("No diff content to analyze"));
     cleanup();
     process.exit(0);
+  }
+
+  const deslopResult = await maybeDeslopStagedChanges({
+    stagedDiff: diff,
+    yes: options.yes,
+  });
+
+  if (deslopResult === "abort") {
+    cleanup();
+    process.exit(0);
+  }
+
+  if (deslopResult === "updated") {
+    diff = await getAndValidateStagedDiff();
+    if (!diff) {
+      cleanup();
+      process.exit(0);
+    }
   }
 
   // Show diff summary
   const diffLines = diff.split("\n").length;
   p.log.info(`Diff: ${diffLines} lines`);
+
+  const branchFlow = await maybeCreateBranchForCommit({
+    diff,
+    yes: options.yes,
+  });
+
+  if (branchFlow === "abort") {
+    cleanup();
+    process.exit(0);
+  }
 
   // If message provided, use it directly
   let commitMessage = options.message;
