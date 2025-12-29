@@ -81,20 +81,33 @@ export async function maybeDeslopStagedChanges(
   const autoDeslop = !!config.commit?.autoDeslop;
 
   let shouldDeslop = false;
+  let extraPrompt = options.extraPrompt?.trim();
 
   if (options.yes) {
     shouldDeslop = autoDeslop;
   } else {
-    const confirm = await p.confirm({
-      message: "Deslop staged changes?",
-      initialValue: autoDeslop,
+    const response = await p.text({
+      message: `Deslop staged changes? ${color.dim("(y/n, or type instructions)")}`,
+      placeholder: autoDeslop
+        ? "Yes (press Enter) or type instructions"
+        : "No (press Enter) or type y/instructions",
+      initialValue: "",
     });
 
-    if (p.isCancel(confirm)) {
+    if (p.isCancel(response)) {
       return "abort";
     }
 
-    shouldDeslop = !!confirm;
+    const input = (response ?? "").trim().toLowerCase();
+
+    if (input === "" || input === "y" || input === "yes") {
+      shouldDeslop = input !== "" || autoDeslop;
+    } else if (input === "n" || input === "no") {
+      shouldDeslop = false;
+    } else {
+      shouldDeslop = true;
+      extraPrompt = response?.trim();
+    }
   }
 
   if (!shouldDeslop) {
@@ -108,23 +121,6 @@ export async function maybeDeslopStagedChanges(
   }
 
   const { baseRef, diff: baseDiff } = await getBaseDiff();
-
-  let extraPrompt = options.extraPrompt?.trim();
-
-  if (!options.yes && !extraPrompt) {
-    const extra = await p.text({
-      message: "Add any deslop exclusions or extra instructions? (optional)",
-      placeholder: "e.g. Keep existing comments in src/api.ts",
-      initialValue: "",
-    });
-
-    if (p.isCancel(extra)) {
-      return "abort";
-    }
-
-    extraPrompt =
-      typeof extra === "string" ? extra.trim() || undefined : undefined;
-  }
 
   const statusBefore = await getStatus();
   const stagedFiles = statusBefore.staged;
@@ -212,9 +208,7 @@ export async function maybeDeslopStagedChanges(
     if (snapshotRef) {
       try {
         await restoreGitSnapshot(snapshotRef);
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     p.cancel(error.message);
     return "abort";
@@ -222,9 +216,7 @@ export async function maybeDeslopStagedChanges(
     if (deslopSession) {
       try {
         await deslopSession.close();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
   }
 }
