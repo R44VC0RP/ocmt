@@ -325,27 +325,15 @@ function getOpencodeAttachUrl(): string | null {
   return url?.trim() || null;
 }
 
-function formatModel(model: ModelConfig): string {
-  return `${model.providerID}/${model.modelID}`;
-}
-
-function stripAnsi(input: string): string {
-  return input.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
 async function runDeslopEditsWithCli(
   prompt: string,
   deslopModel: ModelConfig
 ): Promise<string> {
   if (!(await isOpencodeInstalled())) {
-    p.log.error("OpenCode CLI is not installed");
-    p.log.info(
-      `Install it with: ${color.cyan("npm install -g opencode")} or ${color.cyan("brew install sst/tap/opencode")}`
-    );
-    process.exit(1);
+    throw new Error("OpenCode CLI is not installed");
   }
 
-  const args = ["run", "--title", "oc-deslop", "--model", formatModel(deslopModel)];
+  const args = ["run", "--title", "oc-deslop", "--model", `${deslopModel.providerID}/${deslopModel.modelID}`];
   const attachUrl = getOpencodeAttachUrl();
   if (attachUrl) {
     args.push("--attach", attachUrl);
@@ -375,10 +363,10 @@ async function runDeslopEditsWithCli(
 
     child.on("exit", (code) => {
       if (code === 0) {
-        resolve(stripAnsi(stdout));
+        resolve(stdout);
         return;
       }
-      const details = stripAnsi(stderr || stdout).trim();
+      const details = stderr.trim();
       reject(
         new Error(
           `OpenCode CLI exited with code ${code}${

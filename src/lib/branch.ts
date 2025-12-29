@@ -17,34 +17,18 @@ export interface BranchFlowOptions {
 }
 
 function normalizeBranchName(name: string): string {
-  if (typeof name !== "string") {
-    throw new TypeError(
-      `Expected branch name to be a string, got ${typeof name}`,
-    );
-  }
-
   let normalized = name.trim().replace(/^["']|["']$/g, "");
   normalized = normalized.replace(/\s+/g, "-");
   normalized = normalized.replace(/[^a-zA-Z0-9._/-]+/g, "-");
   normalized = normalized.replace(/-+/g, "-");
   normalized = normalized.replace(/^[-/]+|[-/]+$/g, "");
-  normalized = normalized.toLowerCase();
-
-  if (!normalized || normalized.length === 0) {
-    throw new Error("Branch name cannot be empty after normalization");
-  }
-
-  return normalized;
+  return normalized.toLowerCase();
 }
 
 async function resolveBranchName(
   diff: string,
   yes?: boolean,
 ): Promise<string | null> {
-  if (typeof diff !== "string") {
-    throw new TypeError(`Expected diff to be a string, got ${typeof diff}`);
-  }
-
   const s = p.spinner();
   s.start("Generating branch name");
 
@@ -55,10 +39,6 @@ async function resolveBranchName(
   } catch (error: any) {
     s.stop("Failed to generate branch name");
     throw error;
-  }
-
-  if (!branchName || typeof branchName !== "string") {
-    throw new Error("Generated branch name is invalid or empty");
   }
 
   branchName = normalizeBranchName(branchName);
@@ -137,10 +117,6 @@ async function ensureUniqueBranchName(
   name: string,
   yes?: boolean,
 ): Promise<string | null> {
-  if (!name || typeof name !== "string") {
-    throw new TypeError("Branch name must be a non-empty string");
-  }
-
   let branchName = name;
 
   while (await branchExists(branchName)) {
@@ -173,32 +149,12 @@ async function ensureUniqueBranchName(
 export async function maybeCreateBranchForCommit(
   options: BranchFlowOptions,
 ): Promise<BranchFlowResult> {
-  if (!options || typeof options !== "object") {
-    throw new TypeError("Options must be a valid object");
-  }
-
   const { diff, yes } = options;
-
-  if (!diff || typeof diff !== "string") {
-    throw new TypeError("Diff must be a non-empty string");
-  }
-
-  let config;
-  try {
-    config = await getConfig();
-  } catch (error: any) {
-    p.cancel("Failed to load configuration");
-    throw error;
-  }
+  const config = await getConfig();
 
   const currentBranch = await getCurrentBranch();
   if (!currentBranch) {
     return "continue";
-  }
-
-  if (typeof currentBranch !== "string") {
-    p.cancel("Current branch is invalid");
-    return "abort";
   }
 
   const defaultBranch = await getDefaultBranch();
