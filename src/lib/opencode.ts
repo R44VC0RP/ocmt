@@ -247,12 +247,8 @@ async function getClient(): Promise<OpencodeClient> {
 
 
 
-function extractTextFromParts(parts: unknown[]): string {
+function extractTextFromParts(parts: any[]): string {
   const textParts = parts
-    .filter(
-      (part): part is { type: string; text: string } =>
-        typeof part === "object" && part !== null && "type" in part && "text" in part,
-    )
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
@@ -263,197 +259,6 @@ function extractTextFromParts(parts: unknown[]): string {
 function extractDeslopSummary(text: string): string | null {
   const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*)$/i);
   return summaryMatch ? summaryMatch[1].trim() : null;
-}
-
-const MESSAGE_POLL_INTERVAL_MS = 250;
-const MESSAGE_POLL_TIMEOUT_MS = 60000;
-
-type SessionMessageEntry = {
-  info?: {
-    id?: string;
-    role?: string;
-    error?: unknown;
-  };
-  parts?: unknown[];
-};
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForAssistantText(
-  client: OpencodeClient,
-  sessionID: string,
-  modelID: string,
-  directory?: string,
-): Promise<{ text: string; messageID: string } | null> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < MESSAGE_POLL_TIMEOUT_MS) {
-    const messagesResult = await client.session.messages({
-      path: { id: sessionID },
-      query: directory ? { directory, limit: 20 } : { limit: 20 },
-    });
-
-    if ("error" in messagesResult && messagesResult.error) {
-      throw new Error(
-        `Failed to fetch session messages (${modelID}): ${JSON.stringify(messagesResult.error)}`,
-      );
-    }
-
-    const messages = (messagesResult as { data?: SessionMessageEntry[] }).data;
-    if (messages && messages.length > 0) {
-      for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const entry = messages[i];
-        if (!entry?.info || entry.info.role !== "assistant") {
-          continue;
-        }
-
-        if (entry.info.error) {
-          throw new Error(
-            `Model response error (${modelID}): ${JSON.stringify(entry.info.error)}`,
-          );
-        }
-
-        const text = extractTextFromParts(entry.parts || []);
-        if (text) {
-          return { text, messageID: entry.info.id || "unknown" };
-        }
-      }
-    }
-
-    await sleep(MESSAGE_POLL_INTERVAL_MS);
-  }
-
-  return null;
-}
-
-type EventListenerHandle = {
-  promise: Promise<{ text: string; messageID: string } | null>;
-  abort: () => void;
-};
-
-function createEventListener(
-  client: OpencodeClient,
-  sessionID: string,
-  modelID: string,
-  directory?: string,
-): EventListenerHandle {
-  const controller = new AbortController();
-  return {
-    promise: waitForAssistantTextFromEvents(
-      client,
-      sessionID,
-      modelID,
-      controller,
-      directory,
-    ),
-    abort: () => controller.abort(),
-  };
-}
-
-async function waitForAssistantTextFromEvents(
-  client: OpencodeClient,
-  sessionID: string,
-  modelID: string,
-  controller: AbortController,
-  directory?: string,
-): Promise<{ text: string; messageID: string } | null> {
-  const timeout = setTimeout(() => controller.abort(), MESSAGE_POLL_TIMEOUT_MS);
-  const textParts = new Map<string, string>();
-  let messageID: string | null = null;
-
-  try {
-    const streamResult = await client.event.subscribe({
-      ...(directory ? { query: { directory } } : {}),
-      signal: controller.signal,
-    });
-
-    for await (const event of streamResult.stream) {
-      if (!event || typeof event !== "object" || !("type" in event)) {
-        continue;
-      }
-
-      const typedEvent = event as {
-        type: string;
-        properties?: {
-          sessionID?: string;
-          messageID?: string;
-          delta?: string;
-          part?: { id?: string; type?: string; text?: string; sessionID?: string; messageID?: string };
-          info?: { sessionID?: string; role?: string; error?: unknown; time?: { completed?: number } };
-          permission?: { id?: string; sessionID?: string };
-        };
-      };
-
-      if (typedEvent.type === "permission.updated") {
-        const permission = typedEvent.properties as { id?: string; sessionID?: string } | undefined;
-        if (permission?.sessionID === sessionID && permission.id) {
-          try {
-            await client.postSessionIdPermissionsPermissionId({
-              path: { id: sessionID, permissionID: permission.id },
-              ...(directory ? { query: { directory } } : {}),
-              body: { response: "once" },
-            });
-          } catch {
-            // Ignore permission response errors; the model may fail without it.
-          }
-        }
-      }
-
-      if (typedEvent.type === "message.updated") {
-        const info = typedEvent.properties?.info;
-        if (info?.sessionID === sessionID && info.role === "assistant") {
-          if (info.error) {
-            throw new Error(
-              `Model response error (${modelID}): ${JSON.stringify(info.error)}`,
-            );
-          }
-          if (info.time?.completed) {
-            break;
-          }
-        }
-      }
-
-      if (typedEvent.type === "message.part.updated") {
-        const part = typedEvent.properties?.part;
-        if (part?.sessionID !== sessionID || part.type !== "text") {
-          continue;
-        }
-
-        const partID = part.id || "text";
-        const existing = textParts.get(partID) || "";
-        const delta =
-          typeof typedEvent.properties?.delta === "string"
-            ? typedEvent.properties.delta
-            : "";
-        const nextText = delta ? existing + delta : part.text || existing;
-        textParts.set(partID, nextText);
-        messageID = part.messageID || messageID;
-      }
-
-      if (typedEvent.type === "session.idle") {
-        const properties = typedEvent.properties as { sessionID?: string } | undefined;
-        if (properties?.sessionID === sessionID) {
-          break;
-        }
-      }
-    }
-  } catch (error) {
-    if (!(error instanceof Error && error.name === "AbortError")) {
-      throw error;
-    }
-  } finally {
-    clearTimeout(timeout);
-    controller.abort();
-  }
-
-  const combined = Array.from(textParts.values()).join("").trim();
-  if (!combined) {
-    return null;
-  }
-
-  return { text: combined, messageID: messageID ?? "unknown" };
 }
 
 interface OpencodePromptOptions {
@@ -500,10 +305,6 @@ async function runOpencodePrompt(
     }
   };
 
-  const eventListener = directory
-    ? createEventListener(client, session.data.id, modelID, directory)
-    : null;
-
   let result;
   try {
     result = await client.session.prompt({
@@ -517,84 +318,24 @@ async function runOpencodePrompt(
       },
     });
   } catch (err) {
-    eventListener?.abort();
     await close();
     throw new Error(`Model request failed (${modelID}): ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  if ("error" in result && result.error) {
-    eventListener?.abort();
-    await close();
-    throw new Error(
-      `Model request failed (${modelID}): ${JSON.stringify(result.error)}`,
-    );
-  }
-
-  if (!("data" in result) || !result.data) {
-    eventListener?.abort();
+  if (!result.data) {
     await close();
     throw new Error(`Failed to get AI response from ${modelID}`);
-  }
-
-  const responseInfo = (result.data as { info?: { error?: unknown } })?.info;
-  if (responseInfo?.error) {
-    eventListener?.abort();
-    await close();
-    throw new Error(
-      `Model response error (${modelID}): ${JSON.stringify(responseInfo.error)}`,
-    );
   }
 
   const message = extractTextFromParts(result.data.parts || []);
 
   if (!message) {
-    try {
-      const eventFallback = eventListener
-        ? await eventListener.promise
-        : await waitForAssistantTextFromEvents(
-            client,
-            session.data.id,
-            modelID,
-            new AbortController(),
-            directory,
-          );
-      if (eventFallback) {
-        return {
-          message: eventFallback.text,
-          sessionID: session.data.id,
-          messageID: eventFallback.messageID,
-          close,
-        };
-      }
-
-      const fallback = await waitForAssistantText(
-        client,
-        session.data.id,
-        modelID,
-        directory,
-      );
-      if (fallback) {
-        return {
-          message: fallback.text,
-          sessionID: session.data.id,
-          messageID: fallback.messageID,
-          close,
-        };
-      }
-    } catch (error) {
-      eventListener?.abort();
-      await close();
-      throw error;
-    }
-
-    eventListener?.abort();
     await close();
     throw new Error(
-      `No response generated by ${modelID}. Response: ${JSON.stringify(result.data)} (status ${result.response?.status ?? "unknown"})`,
+      `No response generated by ${modelID}. Response: ${JSON.stringify(result.data)}`,
     );
   }
 
-  eventListener?.abort();
   return {
     message,
     sessionID: session.data.id,
